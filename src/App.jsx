@@ -6,6 +6,28 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp, setDoc, getDoc, query, orderBy } from 'firebase/firestore';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
+// --- エラー捕捉用コンポーネント ---
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-red-50 p-6 flex flex-col items-center justify-center text-red-900">
+          <AlertCircle size={48} className="mb-4 text-red-600" />
+          <h1 className="text-xl font-bold mb-2">エラーが発生しました</h1>
+          <p className="text-sm font-mono bg-white p-4 rounded border border-red-200">{this.state.error?.toString()}</p>
+          <button onClick={() => window.location.reload()} className="mt-4 bg-red-600 text-white px-4 py-2 rounded shadow-md">再読み込み</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // --- Firebase 設定 ---
 const firebaseConfig = {
   apiKey: "AIzaSyAo-6eLSm2fNk3h1U3GKVCRY3llM_JP-14",
@@ -23,8 +45,6 @@ const db = getFirestore(app);
 const appId = 'rookie_manager_shared'; 
 
 // --- ヘルパー関数 ---
-
-// 日付の差分を計算（未来はマイナス値、過去はプラス値）
 const getDaysDiff = (dateString) => {
   if (!dateString) return null;
   const today = new Date();
@@ -49,10 +69,9 @@ const ProjectCard = ({ item, onClick }) => {
   if (!item) return null;
   const getRankStyle = (rank) => {
     switch(rank) {
-      case 'high': return "bg-red-50 border-red-200 shadow-red-100";
-      case 'medium': return "bg-indigo-50 border-indigo-200 shadow-indigo-100";
-      case 'low': 
-      default: return "bg-white border-slate-200 shadow-slate-100";
+      case 'high': return "bg-red-50 border-red-200";
+      case 'medium': return "bg-indigo-50 border-indigo-200";
+      case 'low': default: return "bg-white border-slate-200";
     }
   };
   const getRankLabel = (rank) => {
@@ -80,11 +99,10 @@ const ProjectCard = ({ item, onClick }) => {
   );
 };
 
-// --- サブコンポーネント: メモカード（未来の予定のみ） ---
+// --- サブコンポーネント: メモカード（リスト表示用） ---
 const MemoListItem = ({ item, isReordering, onMoveUp, onMoveDown, onDelete }) => {
   const daysDiff = getDaysDiff(item.displayDate);
   const isToday = daysDiff === 0;
-
   const getRankBadge = (rank) => {
     switch(rank) {
       case 'high': return <span className="bg-red-100 text-red-600 border border-red-200 px-1.5 py-0.5 rounded text-[10px] font-bold">高</span>;
@@ -93,9 +111,8 @@ const MemoListItem = ({ item, isReordering, onMoveUp, onMoveDown, onDelete }) =>
       default: return null;
     }
   };
-
   return (
-    <div className={`p-3 rounded-lg border shadow-sm mb-2 transition-all relative group bg-green-50 border-green-200 ${isToday ? 'ring-2 ring-orange-300' : ''} ${isReordering ? 'border-dashed border-slate-400' : ''}`}>
+    <div className={`p-3 rounded-lg border shadow-sm mb-2 transition-all relative group bg-green-50 border-green-200 ${isToday ? 'ring-2 ring-orange-300' : ''}`}>
       <div className="flex justify-between items-start mb-1">
         <div className="flex items-center gap-2">
           {isReordering && <GripVertical size={16} className="text-slate-400 cursor-grab" />}
@@ -120,7 +137,42 @@ const MemoListItem = ({ item, isReordering, onMoveUp, onMoveDown, onDelete }) =>
   );
 };
 
-// --- サブコンポーネント: カレンダー予定 モーダル ---
+// --- サブコンポーネント: 案件編集モーダル ---
+const ProjectEditModal = ({ isOpen, onClose, rookie, onSave }) => {
+  const [content, setContent] = useState("");
+  const [projectDate, setProjectDate] = useState("");
+  const [projectRank, setProjectRank] = useState("low");
+
+  useEffect(() => {
+    if (rookie) {
+      setContent(rookie.currentProject || "");
+      setProjectDate(rookie.projectDate || ""); 
+      setProjectRank(rookie.projectRank || "low");
+    }
+  }, [rookie, isOpen]);
+
+  if (!isOpen || !rookie) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center sm:p-4 text-left">
+      <div className="absolute inset-0 bg-black bg-opacity-50" onClick={onClose}></div>
+      <div className="bg-white w-full h-full sm:h-auto sm:max-h-[70vh] sm:w-full sm:max-w-md sm:rounded-xl shadow-2xl p-6 relative z-10 flex flex-col animate-fade-in-up">
+        <div className="flex justify-between items-center mb-4">
+          <div><span className="text-xs text-slate-500 font-bold">案件情報の編集</span><h2 className="text-lg font-bold text-slate-800">{rookie.name}</h2></div>
+          <button onClick={onClose} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-full"><X size={24} /></button>
+        </div>
+        <form onSubmit={(e) => { e.preventDefault(); onSave(rookie.id, content, projectDate, projectRank); onClose(); }} className="flex-1 flex flex-col space-y-4">
+          <div><label className="block text-xs font-bold text-indigo-700 mb-2">優先度・評価</label><div className="flex gap-2">{['high','medium','low'].map(r=><label key={r} className={`flex-1 p-2 rounded-lg border text-center cursor-pointer transition-colors ${projectRank===r? r==='high'?'bg-red-100 border-red-500 text-red-700 font-bold':r==='medium'?'bg-indigo-100 border-indigo-500 text-indigo-700 font-bold':'bg-slate-100 border-slate-500 text-slate-700 font-bold' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}><input type="radio" name="rank" value={r} checked={projectRank===r} onChange={(e)=>setProjectRank(e.target.value)} className="hidden"/>{r==='high'?'高':r==='medium'?'中':'低'}</label>)}</div></div>
+          <div><label className="block text-xs font-bold text-indigo-700 mb-1">営業日</label><input type="date" value={projectDate} onChange={(e) => setProjectDate(e.target.value)} className="w-full p-2 border rounded-lg font-bold text-slate-700"/></div>
+          <div className="flex-1 flex flex-col"><label className="block text-xs font-bold text-indigo-700 mb-1">案件内容</label><textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="案件の内容を入力..." className="w-full flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-indigo-400 outline-none resize-none" style={{ minHeight: '120px' }}/></div>
+          <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl hover:bg-indigo-700 font-bold text-lg shadow-md">保存する</button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// --- サブコンポーネント: カレンダー予定モーダル ---
 const AddEventModal = ({ isOpen, onClose, date, event, onSave, onDelete }) => {
   const [eventDate, setEventDate] = useState("");
   const [name, setName] = useState("");
@@ -156,16 +208,7 @@ const AddEventModal = ({ isOpen, onClose, date, event, onSave, onDelete }) => {
         <form onSubmit={(e) => { e.preventDefault(); onSave(eventDate, name, note, rank, event?.id); onClose(); }} className="flex-1 flex flex-col space-y-4">
           <div><label className="block text-xs font-bold text-green-700 mb-1">日付</label><input type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} className="w-full p-2 border rounded-lg font-bold" required /></div>
           <div><label className="block text-xs font-bold text-green-700 mb-1">名前</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="名前を入力..." className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-green-400 outline-none" required /></div>
-          <div>
-            <label className="block text-xs font-bold text-green-700 mb-2">重要度</label>
-            <div className="flex gap-2">
-              {['high', 'medium', 'low'].map(r => (
-                <label key={r} className={`flex-1 p-2 rounded-lg border text-center cursor-pointer transition-colors ${rank === r ? 'bg-green-100 border-green-500 text-green-700 font-bold' : 'border-slate-200 text-slate-500'}`}>
-                  <input type="radio" name="rank" value={r} checked={rank === r} onChange={(e) => setRank(e.target.value)} className="hidden" /> {r === 'high' ? '高' : r === 'medium' ? '中' : '低'}
-                </label>
-              ))}
-            </div>
-          </div>
+          <div><label className="block text-xs font-bold text-green-700 mb-2">重要度</label><div className="flex gap-2">{['high', 'medium', 'low'].map(r => (<label key={r} className={`flex-1 p-2 rounded-lg border text-center cursor-pointer transition-colors ${rank === r ? 'bg-green-100 border-green-500 text-green-700 font-bold' : 'border-slate-200 text-slate-500'}`}><input type="radio" name="rank" value={r} checked={rank === r} onChange={(e) => setRank(e.target.value)} className="hidden" /> {r === 'high' ? '高' : r === 'medium' ? '中' : '低'}</label>))}</div></div>
           <div className="flex-1 flex flex-col"><label className="block text-xs font-bold text-green-700 mb-1">メモ</label><textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="内容を入力..." className="w-full flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-green-400 outline-none resize-none" style={{ minHeight: '100px' }} /></div>
           <div className="flex gap-3">
              {event && <button type="button" onClick={() => { if(window.confirm("削除しますか？")) { onDelete(event.id); onClose(); } }} className="bg-red-50 text-red-600 px-4 py-3 rounded-xl hover:bg-red-100 border border-red-100"><Trash2 size={20} /></button>}
@@ -177,8 +220,79 @@ const AddEventModal = ({ isOpen, onClose, date, event, onSave, onDelete }) => {
   );
 };
 
-// --- メインアプリ ---
-const App = () => {
+// --- サブコンポーネント: 詳細モーダル ---
+const MemberDetailModal = ({ isOpen, onClose, rookie, onAddLog, onDeleteLog, onDeleteMember }) => {
+  const [newLogDate, setNewLogDate] = useState(formatDate(new Date()));
+  const [newLogContent, setNewLogContent] = useState("");
+  const [newLogProject, setNewLogProject] = useState(""); 
+
+  useEffect(() => { if (isOpen && rookie) { setNewLogProject(rookie.currentProject || ""); setNewLogDate(formatDate(new Date())); setNewLogContent(""); } }, [isOpen, rookie]);
+  if (!isOpen || !rookie) return null;
+  const sortedLogs = [...(rookie.logs || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center sm:p-4 text-left">
+      <div className="absolute inset-0 bg-black bg-opacity-50" onClick={onClose}></div>
+      <div className="bg-white w-full h-full sm:h-auto sm:max-h-[90vh] sm:rounded-xl shadow-2xl overflow-hidden flex flex-col relative z-10 animate-fade-in-up">
+        <div className="bg-slate-50 p-4 border-b flex justify-between items-center safe-area-top"><div><h2 className="text-xl font-bold text-slate-800">{rookie.name}</h2><p className="text-xs text-slate-500 mt-1">受入日: {rookie.joinDate}</p></div><button onClick={onClose} className="p-2 bg-slate-200 hover:bg-slate-300 rounded-full"><X size={24} /></button></div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-24 sm:pb-6">
+          <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 shadow-sm">
+            <h3 className="font-bold text-blue-800 mb-3 flex items-center gap-2 text-sm"><Plus size={16} /> 記録を追加</h3>
+            <form onSubmit={(e) => { e.preventDefault(); if(!newLogContent.trim()) return; onAddLog(rookie.id, newLogDate, newLogContent, newLogProject); setNewLogContent(""); }} className="space-y-3">
+              <div><label className="block text-xs font-bold text-blue-700 mb-1">実施日</label><input type="date" value={newLogDate} onChange={(e) => setNewLogDate(e.target.value)} className="w-full p-2 rounded border border-blue-200 bg-white text-sm" required /></div>
+              <div><label className="block text-xs font-bold text-blue-700 mb-1">内容</label><textarea value={newLogContent} onChange={(e) => setNewLogContent(e.target.value)} placeholder="内容..." className="w-full p-2 rounded border border-blue-200 text-sm" required /></div>
+              <div><label className="block text-xs font-bold text-blue-700 mb-1">案件</label><textarea value={newLogProject} onChange={(e) => setNewLogProject(e.target.value)} placeholder="最新の案件情報..." className="w-full p-2 rounded border border-blue-200 text-sm bg-indigo-50/50" rows="2" /></div>
+              <div className="text-right"><button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm">記録する</button></div>
+            </form>
+          </div>
+          <div>
+            <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2 text-sm"><History size={16} /> 履歴</h3>
+            <div className="space-y-4">
+              {sortedLogs.map(log => (
+                <div key={log.id} className="border-l-4 border-slate-200 pl-4 py-1">
+                  <div className="flex justify-between">
+                    <div className="text-xs text-slate-500 mb-1">{log.date} ({getDaysDiff(log.date) >= 0 ? `${getDaysDiff(log.date)}日前` : `あと${Math.abs(getDaysDiff(log.date))}日`})</div>
+                    <button onClick={() => { if(window.confirm("削除しますか？")) onDeleteLog(rookie.id, log.id); }} className="text-slate-300 hover:text-red-500"><Trash2 size={12}/></button>
+                  </div>
+                  {log.project && <div className="text-xs text-indigo-600 font-bold mb-1">案件: {log.project}</div>}
+                  <p className="text-sm text-slate-700 whitespace-pre-wrap">{log.content}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="bg-slate-50 p-4 border-t flex justify-end"><button onClick={() => onDeleteMember(rookie)} className="text-red-500 px-3 py-2 rounded flex items-center gap-2 text-sm font-bold"><Trash2 size={16} /> メンバー削除</button></div>
+      </div>
+    </div>
+  );
+};
+
+// --- サブコンポーネント: メンバー追加モーダル ---
+const AddMemberModal = ({ isOpen, onClose, onAddMember }) => {
+  const [name, setName] = useState("");
+  const [joinDate, setJoinDate] = useState(formatDate(new Date()));
+  const [initialLog, setInitialLog] = useState("");
+  const [initialProject, setInitialProject] = useState(""); 
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center sm:p-4 text-left">
+      <div className="absolute inset-0 bg-black bg-opacity-50" onClick={onClose}></div>
+      <div className="bg-white w-full h-full sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-md sm:rounded-xl shadow-2xl p-6 relative z-10 flex flex-col justify-center animate-fade-in-up">
+        <h2 className="text-xl font-bold text-slate-800 mb-6">メンバー追加</h2>
+        <form onSubmit={(e) => { e.preventDefault(); if(!name.trim()) return; onAddMember(name, joinDate, initialLog, initialProject); setName(""); onClose(); }} className="space-y-4">
+          <div><label className="block text-sm font-bold text-slate-700 mb-1">名前 *</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full p-2 border rounded-lg" required /></div>
+          <div><label className="block text-sm font-bold text-slate-700 mb-1">受入日</label><input type="date" value={joinDate} onChange={(e) => setJoinDate(e.target.value)} className="w-full p-2 border rounded-lg" required /></div>
+          <div><label className="block text-sm font-bold text-slate-700 mb-1">初回の案件</label><textarea value={initialProject} onChange={(e) => setInitialProject(e.target.value)} className="w-full p-2 border rounded-lg" /></div>
+          <div><label className="block text-sm font-bold text-slate-700 mb-1">フォロー内容</label><textarea value={initialLog} onChange={(e) => setInitialLog(e.target.value)} className="w-full p-2 border rounded-lg" /></div>
+          <button type="submit" className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold">追加する</button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// --- メインコンポーネント ---
+const MainApp = () => {
   const [user, setUser] = useState(null); 
   const [rookies, setRookies] = useState([]);
   const [events, setEvents] = useState([]); 
@@ -192,29 +306,17 @@ const App = () => {
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [selectedEventDate, setSelectedEventDate] = useState("");
   const [editingEvent, setEditingEvent] = useState(null);
-  const [projectSortOrder, setProjectSortOrder] = useState('rank_desc'); // 最初から「高」
+  const [projectSortOrder, setProjectSortOrder] = useState('rank_desc'); 
   const [isReorderingMemo, setIsReorderingMemo] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [currentDate, setCurrentDate] = useState(new Date());
   const [loading, setLoading] = useState(true);
 
-  // カレンダースワイプ
   const [touchStart, setTouchStart] = useState(null);
   const onTouchStart = (e) => { setTouchStart(e.targetTouches[0].clientX); };
-  const onTouchEnd = (e) => { 
-    if (!touchStart) return;
-    const distance = touchStart - e.changedTouches[0].clientX;
-    if (distance > 50) changeMonth(1);
-    if (distance < -50) changeMonth(-1);
-  };
+  const onTouchEnd = (e) => { if (!touchStart) return; const distance = touchStart - e.changedTouches[0].clientX; if (distance > 50) changeMonth(1); if (distance < -50) changeMonth(-1); };
 
-  useEffect(() => { 
-    const initAuth = async () => { await signInAnonymously(auth); }; 
-    initAuth(); 
-    const unsubscribe = onAuthStateChanged(auth, setUser); 
-    return () => unsubscribe(); 
-  }, []);
-
+  useEffect(() => { const initAuth = async () => { await signInAnonymously(auth); }; initAuth(); const unsubscribe = onAuthStateChanged(auth, setUser); return () => unsubscribe(); }, []);
   useEffect(() => {
     if (!user) return; 
     const unsubR = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'rookies'), snap => { setRookies(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))); setLoading(false); });
@@ -237,7 +339,6 @@ const App = () => {
   }, [rookies, projectSortOrder]);
 
   const memoList = useMemo(() => {
-    // 未来（今日以降）の予定のみ抽出
     let list = events.filter(e => getDaysDiff(e.date) <= 0).map(e => ({ id: e.id, type: 'event', name: e.name, content: e.note, rank: e.rank || 'medium', displayDate: e.date }));
     if (memoOrder.length > 0) {
       const ordered = [];
@@ -250,30 +351,45 @@ const App = () => {
     return list.sort((a, b) => a.displayDate.localeCompare(b.displayDate));
   }, [events, memoOrder]);
 
-  const changeMonth = (offset) => {
-    const newDate = new Date(currentDate);
-    newDate.setMonth(newDate.getMonth() + offset);
-    setCurrentDate(newDate);
-  };
-
-  const handleSaveEvent = async (date, name, note, rank, id) => { 
-    if(!user) return; 
-    const data = { date, name, note, rank }; 
-    if(id) { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', id), data); } 
-    else { await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'events'), { ...data, createdAt: serverTimestamp() }); } 
-  };
-  
+  const changeMonth = (offset) => { const newDate = new Date(currentDate); newDate.setMonth(newDate.getMonth() + offset); setCurrentDate(newDate); };
+  const handleSaveEvent = async (date, name, note, rank, id) => { if(!user) return; const data = { date, name, note, rank }; if(id) { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', id), data); } else { await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'events'), { ...data, createdAt: serverTimestamp() }); } };
   const handleDeleteEvent = async (id) => { if(!user) return; await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', id)); };
-  const handleUpdateProjectOnly = async (id, currentProject, projectDate, projectRank) => { if(!user) return; await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rookies', id), { currentProject, projectDate, projectRank, projectUpdatedAt: serverTimestamp() }); };
+  const handleUpdateProjectOnly = async (id, cp, pd, pr) => { if(!user) return; await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rookies', id), { currentProject: cp, projectDate: pd, projectRank: pr, projectUpdatedAt: serverTimestamp() }); };
+  const handleAddLog = async (id, date, content, project) => { if(!user) return; const rookie = rookies.find(r => r.id === id); await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rookies', id), { logs: [...(rookie.logs || []), { id: Date.now().toString(), date, content, project }], currentProject: project, projectUpdatedAt: serverTimestamp() }); };
+  const handleDeleteLog = async (id, logId) => { if(!user) return; const rookie = rookies.find(r => r.id === id); const filteredLogs = rookie.logs.filter(log => log.id !== logId); await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rookies', id), { logs: filteredLogs }); };
   const handleAddMember = async (name, joinDate, content, project) => { if(!user) return; await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'rookies'), { name, joinDate, logs: content ? [{ id: Date.now().toString(), date: joinDate, content, project }] : [], currentProject: project, createdAt: serverTimestamp(), projectUpdatedAt: serverTimestamp() }); };
   const handleDeleteMember = async (r) => { if(!user) return; if(window.confirm(`${r.name} さんを削除しますか？`)) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rookies', r.id)); setIsModalOpen(false); };
+  const handleMoveItem = async (itemId, direction) => {
+    const currentList = [...memoList];
+    const index = currentList.findIndex(i => i.id === itemId);
+    if (index === -1) return;
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= currentList.length) return;
+    const temp = currentList[index];
+    currentList[index] = currentList[newIndex];
+    currentList[newIndex] = temp;
+    const newOrder = currentList.map(i => i.id);
+    setMemoOrder(newOrder); 
+    try { if(!user) return; await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { memoOrder: newOrder }, { merge: true }); } catch (e) { console.error(e); }
+  };
+
+  const getCalendarDays = () => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const startDay = new Date(year, month, 1).getDay();
+    const days = [];
+    for (let i = 0; i < startDay; i++) days.push(null);
+    for (let i = 1; i <= daysInMonth; i++) days.push(new Date(year, month, i));
+    return days;
+  };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-400"><Loader2 className="w-8 h-8 animate-spin" /></div>;
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800 pb-20 sm:pb-0 flex flex-col">
       <header className="bg-white shadow sticky top-0 z-10 safe-area-top">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between"><div className="flex items-center gap-2 text-blue-600"><Users size={24} /><h1 className="text-lg font-bold text-slate-800">Rookie Manager</h1></div><button onClick={() => setIsAddMemberModalOpen(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-md text-sm font-bold flex items-center gap-1"><UserPlus size={16} /> 追加</button></div>
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between"><div className="flex items-center gap-2 text-blue-600"><Users size={24} /><h1 className="text-lg font-bold text-slate-800">Rookie Manager</h1></div><button onClick={() => setIsAddMemberModalOpen(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-md text-sm font-bold flex items-center gap-1 shadow-sm"><UserPlus size={16} /> 追加</button></div>
         <div className="flex max-w-6xl mx-auto px-4 gap-4 text-sm font-medium border-t overflow-x-auto hide-scrollbar">
           {['list', 'calendar', 'project', 'memo'].map(mode => <button key={mode} onClick={() => { setViewMode(mode); if(mode === 'project') setProjectSortOrder('rank_desc'); }} className={`py-3 flex-shrink-0 border-b-2 transition ${viewMode === mode ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`}>{mode === 'list' ? '一覧' : mode === 'calendar' ? '予定' : mode === 'project' ? '案件' : 'メモ'}</button>)}
         </div>
@@ -282,7 +398,7 @@ const App = () => {
       <main className={`max-w-6xl mx-auto w-full ${viewMode === 'calendar' ? 'p-0 flex-1 flex flex-col' : 'p-3 sm:p-4'}`}>
         {viewMode === 'list' && (
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-            {rookies.map(r => (
+            {rookies.filter(r => r.name.includes(searchTerm)).map(r => (
               <div key={r.id} onClick={() => { setSelectedRookie(r); setIsModalOpen(true); }} className="bg-white rounded-lg shadow-sm border p-3 h-full flex flex-col">
                 <h3 className="text-sm font-bold text-slate-800 truncate">{r.name}</h3>
                 <div className="mt-2 pt-2 border-t border-slate-100 space-y-1">
@@ -303,16 +419,15 @@ const App = () => {
             </div>
             <div className="grid grid-cols-7 border-b text-center text-[10px] font-bold text-slate-500 bg-slate-50">{['日','月','火','水','木','金','土'].map((d,i) => <div key={d} className={`py-2 ${i===0?'text-red-400':i===6?'text-blue-400':''}`}>{d}</div>)}</div>
             <div className="grid grid-cols-7 auto-rows-fr bg-slate-200 gap-px flex-1">
-              {[...Array(new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay())].map((_, i) => <div key={`empty-${i}`} className="bg-slate-50 min-h-[80px]"></div>)}
-              {[...Array(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate())].map((_, i) => {
-                const d = new Date(currentDate.getFullYear(), currentDate.getMonth(), i + 1);
-                const ds = formatDate(d);
-                const isT = new Date().toDateString() === d.toDateString();
+              {getCalendarDays().map((date, i) => {
+                if (!date) return <div key={`empty-${i}`} className="bg-slate-50 min-h-[80px]"></div>;
+                const ds = formatDate(date);
+                const isT = new Date().toDateString() === date.toDateString();
                 const dL = rookies.flatMap(r => (r.logs || []).filter(l => l.date === ds).map(l => ({ rN: r.name, rI: r.id })));
                 const dE = events.filter(e => e.date === ds);
                 return (
                   <div key={i} className={`bg-white min-h-[80px] p-0.5 flex flex-col ${isT ? 'bg-orange-50' : ''}`} onClick={() => { setSelectedEventDate(ds); setEditingEvent(null); setIsEventModalOpen(true); }}>
-                    <span className={`text-[10px] font-bold mb-0.5 ${isT ? 'text-orange-600' : 'text-slate-400'}`}>{i+1}</span>
+                    <span className={`text-[10px] font-bold mb-0.5 ${isT ? 'text-orange-600' : 'text-slate-400'}`}>{date.getDate()}</span>
                     <div className="space-y-0.5 overflow-y-auto max-h-[80px] hide-scrollbar">
                       {dL.map((l, idx) => <div key={idx} onClick={(e) => { e.stopPropagation(); setSelectedRookie(rookies.find(r=>r.id===l.rI)); setIsModalOpen(true); }} className="text-[8px] px-1 py-0.5 rounded truncate leading-tight border bg-blue-100 text-blue-800 border-blue-200">{l.rN}</div>)}
                       {dE.map((e, idx) => <div key={idx} onClick={(eO) => { eO.stopPropagation(); setEditingEvent(e); setSelectedEventDate(ds); setIsEventModalOpen(true); }} className="text-[8px] px-1 py-0.5 rounded truncate cursor-pointer leading-tight border bg-green-100 text-green-800 border-green-200">{e.name}</div>)}
@@ -333,7 +448,7 @@ const App = () => {
         {viewMode === 'memo' && (
           <div className="pb-20">
             <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-slate-700">統合メモ（未来のみ）</h2><button onClick={() => setIsReorderingMemo(!isReorderingMemo)} className={`px-3 py-1.5 text-xs rounded-lg font-bold ${isReorderingMemo ? 'bg-orange-500 text-white' : 'bg-slate-100 text-slate-600'}`}>{isReorderingMemo ? '完了' : '並び替え'}</button></div>
-            <div className="space-y-2">{memoList.length ? memoList.map(item => <MemoListItem key={item.id} item={item} isReordering={isReorderingMemo} onDelete={handleDeleteEvent} />) : <div className="p-8 text-center text-slate-400 font-bold italic">未来の予定はありません</div>}</div>
+            <div className="space-y-2">{memoList.length ? memoList.map(item => <MemoListItem key={item.id} item={item} isReordering={isReorderingMemo} onMoveUp={(id) => handleMoveItem(id, -1)} onMoveDown={(id) => handleMoveItem(id, 1)} onDelete={handleDeleteEvent} />) : <div className="p-8 text-center text-slate-400 font-bold italic">未来の予定はありません</div>}</div>
           </div>
         )}
       </main>
@@ -345,11 +460,19 @@ const App = () => {
         <button onClick={() => setViewMode('memo')} className={`flex flex-col items-center flex-1 h-full justify-center ${viewMode === 'memo' ? 'text-blue-600' : 'text-slate-400'}`}><StickyNote size={20} /><span className="text-[10px] mt-1 font-bold">メモ</span></button>
       </nav>
 
+      <MemberDetailModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} rookie={selectedRookie} onAddLog={handleAddLog} onDeleteLog={handleDeleteLog} onDeleteMember={handleDeleteMember} />
       <AddMemberModal isOpen={isAddMemberModalOpen} onClose={() => setIsAddMemberModalOpen(false)} onAddMember={handleAddMember} />
       <ProjectEditModal isOpen={isProjectEditOpen} onClose={() => setIsProjectEditOpen(false)} rookie={editingProjectRookie} onSave={handleUpdateProjectOnly} />
       <AddEventModal isOpen={isEventModalOpen} onClose={() => setIsEventModalOpen(false)} date={selectedEventDate} event={editingEvent} onSave={handleSaveEvent} onDelete={handleDeleteEvent} />
     </div>
   );
 };
+
+// --- Appコンポーネント (ErrorBoundaryでラップ) ---
+const App = () => (
+  <ErrorBoundary>
+    <MainApp />
+  </ErrorBoundary>
+);
 
 export default App;
